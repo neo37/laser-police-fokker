@@ -568,9 +568,53 @@ footer {
       </div>
 
       <div class="field">
+        <label>Метод</label>
+        <select id="bw-method" onchange="bwToggleThresh(); bwPreviewDebounce()"
+          style="background:#222;border:1px solid #333;color:#ddd;padding:4px 6px;
+                 border-radius:3px;width:100%;font-family:monospace;font-size:12px">
+          <option value="floyd-steinberg">Floyd-Steinberg</option>
+          <option value="atkinson">Atkinson</option>
+          <option value="bayer">Bayer (сетка)</option>
+          <option value="threshold">Порог (threshold)</option>
+        </select>
+      </div>
+
+      <div class="field" id="bw-thresh-row" style="display:none">
         <label>Порог <span id="bw-thresh-val" style="color:var(--cyan)">128</span></label>
         <input type="range" id="bw-thresh" min="0" max="255" value="128"
                oninput="g('bw-thresh-val').textContent=this.value; bwPreviewDebounce()">
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">
+        <div class="field" style="margin-bottom:0">
+          <label>Яркость <span id="bw-br-val" style="color:var(--cyan)">1.0</span></label>
+          <input type="range" id="bw-br" min="0.3" max="2.5" step="0.05" value="1.0"
+                 oninput="g('bw-br-val').textContent=parseFloat(this.value).toFixed(2); bwPreviewDebounce()">
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label>Контраст <span id="bw-ct-val" style="color:var(--cyan)">1.0</span></label>
+          <input type="range" id="bw-ct" min="0.3" max="3.0" step="0.05" value="1.0"
+                 oninput="g('bw-ct-val').textContent=parseFloat(this.value).toFixed(2); bwPreviewDebounce()">
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label>Гамма <span id="bw-gm-val" style="color:var(--cyan)">1.0</span></label>
+          <input type="range" id="bw-gm" min="0.3" max="3.0" step="0.05" value="1.0"
+                 oninput="g('bw-gm-val').textContent=parseFloat(this.value).toFixed(2); bwPreviewDebounce()">
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label>Blur <span id="bw-bl-val" style="color:var(--cyan)">0</span></label>
+          <input type="range" id="bw-bl" min="0" max="5" step="0.25" value="0"
+                 oninput="g('bw-bl-val').textContent=parseFloat(this.value).toFixed(2); bwPreviewDebounce()">
+        </div>
+      </div>
+
+      <div style="display:flex;gap:16px;margin-bottom:8px">
+        <label style="display:flex;align-items:center;gap:5px;color:#aaa;font-size:11px;cursor:pointer">
+          <input type="checkbox" id="bw-sharpen" onchange="bwPreviewDebounce()"> Резкость
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;color:#aaa;font-size:11px;cursor:pointer">
+          <input type="checkbox" id="bw-invert" onchange="bwPreviewDebounce()"> Инверт
+        </label>
       </div>
 
       <div class="field">
@@ -1291,6 +1335,10 @@ function bwMode() {
   return document.querySelector('input[name="bw-mode"]:checked').value;
 }
 
+function bwToggleThresh() {
+  g('bw-thresh-row').style.display = g('bw-method').value === 'threshold' ? '' : 'none';
+}
+
 function bwPreviewDebounce() {
   clearTimeout(_bwDebTimer);
   _bwDebTimer = setTimeout(() => bwConvert(true), 300);
@@ -1309,10 +1357,17 @@ async function bwConvert(previewOnly) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        image:     img,
-        threshold: parseInt(g('bw-thresh').value),
-        mode:      bwMode(),
-        save:      !previewOnly,
+        image:      img,
+        method:     g('bw-method').value,
+        threshold:  parseInt(g('bw-thresh').value),
+        brightness: parseFloat(g('bw-br').value),
+        contrast:   parseFloat(g('bw-ct').value),
+        gamma:      parseFloat(g('bw-gm').value),
+        blur:       parseFloat(g('bw-bl').value),
+        sharpen:    g('bw-sharpen').checked,
+        invert:     g('bw-invert').checked,
+        mode:       bwMode(),
+        save:       !previewOnly,
       }),
     });
     const d = await r.json();

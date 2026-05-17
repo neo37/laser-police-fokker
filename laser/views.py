@@ -186,76 +186,111 @@ def api_upload(request):
     return JsonResponse({'ok': True, 'name': f.name})
 
 
+def _dither(arr, method, threshold):
+    if method == 'threshold':
+        return (arr >= threshold).astype(np.uint8) * 255
+    if method == 'floyd-steinberg':
+        img = arr.astype(np.float32)
+        h, w = img.shape
+        for y in range(h):
+            for x in range(w):
+                old = img[y, x]; new = 255. if old >= 128. else 0.
+                img[y, x] = new; err = old - new
+                if x+1 < w:                img[y, x+1]   += err*7/16
+                if y+1 < h:
+                    if x > 0:              img[y+1, x-1] += err*3/16
+                    img[y+1, x]            += err*5/16
+                    if x+1 < w:            img[y+1, x+1] += err*1/16
+        return (img >= 128).astype(np.uint8) * 255
+    if method == 'atkinson':
+        img = arr.astype(np.float32)
+        h, w = img.shape
+        for y in range(h):
+            for x in range(w):
+                old = img[y, x]; new = 255. if old >= 128. else 0.
+                img[y, x] = new; err = (old-new)/8.
+                for dy, dx in [(0,1),(0,2),(1,-1),(1,0),(1,1),(2,0)]:
+                    ny, nx = y+dy, x+dx
+                    if 0 <= ny < h and 0 <= nx < w: img[ny, nx] += err
+        return (img >= 128).astype(np.uint8) * 255
+    if method == 'bayer':
+        size = 8
+        m = np.array([[0,2],[3,1]], dtype=np.float32); cur = 2
+        while cur < size:
+            m = np.asarray(np.bmat([[4*m,4*m+2],[4*m+3,4*m+1]]), dtype=np.float32); cur *= 2
+        m = (m+.5)/(cur*cur)*255.
+        h, w = arr.shape
+        tiled = np.tile(m, (h//cur+1, w//cur+1))[:h, :w]
+        return (arr.astype(np.float32) > tiled).astype(np.uint8) * 255
+    return (arr >= threshold).astype(np.uint8) * 255
+
+
 @csrf_exempt
 def api_convert_bw(request):
-    """
-    Convert an image to 2-colour PNG.
-
-    Body JSON:
-      image     — filename in IMAGES_DIR
-      threshold — 0-255  (pixels >= threshold → white, < threshold → black)
-      mode      — "bw"               : pure black & white
-                  "transparent_white": black pixels kept, white → transparent
-                  "transparent_black": white pixels kept, black → transparent
-      save      — bool, save result to IMAGES_DIR (default true)
-
-    Returns:
-      {ok, preview (data URI), saved_as (filename or null)}
-    """
-    d         = json.loads(request.body)
-    name      = os.path.basename(d.get('image', ''))
-    threshold = max(0, min(255, int(d.get('threshold', 128))))
-    mode      = d.get('mode', 'bw')
-    save      = d.get('save', True)
+    from PIL import ImageEnhance, ImageFilter
+    d          = json.loads(request.body)
+    name       = os.path.basename(d.get('image', ''))
+    method     = d.get('method',     'floyd-steinberg')
+    threshold  = max(0, min(255, int(d.get('threshold', 128))))
+    brightness = float(d.get('brightness', 1.0))
+    contrast   = float(d.get('contrast',   1.0))
+    gamma      = float(d.get('gamma',      1.0))
+    blur_r     = float(d.get('blur',       0.0))
+    sharpen    = bool(d.get('sharpen',     False))
+    invert     = bool(d.get('invert',      False))
+    mode       = d.get('mode', 'bw')
+    save       = d.get('save', True)
 
     src_path = os.path.join(settings.IMAGES_DIR, name)
     if not os.path.exists(src_path):
         return JsonResponse({'ok': False, 'msg': 'Файл не найден'})
 
-    img  = Image.open(src_path).convert('L')   # grayscale
-    arr  = np.array(img)
+    img = Image.open(src_path).convert('RGB')
+    if brightness != 1.0: img = ImageEnhance.Brightness(img).enhance(brightness)
+    if contrast   != 1.0: img = ImageEnhance.Contrast(img).enhance(contrast)
+    if blur_r     >  0.0: img = img.filter(ImageFilter.GaussianBlur(radius=blur_r))
+    if sharpen:            img = img.filter(ImageFilter.SHARPEN)
 
-    white_mask = arr >= threshold   # True → white
-    black_mask = ~white_mask        # True → black
+    gray = img.convert('L')
+    if gamma != 1.0:
+        gray = gray.point([int((i/255.)**(1./gamma)*255) for i in range(256)])
+
+    arr    = np.array(gray)
+    binary = _dither(arr, method, threshold)
+    if invert: binary = 255 - binary
+
+    wm = binary >= 128; bm = ~wm
 
     if mode == 'bw':
-        out = np.zeros((*arr.shape, 3), dtype=np.uint8)
-        out[white_mask] = [255, 255, 255]
-        out[black_mask] = [0,   0,   0  ]
-        result = Image.fromarray(out, 'RGB')
-
+        out = np.zeros((*binary.shape, 3), dtype=np.uint8)
+        out[wm] = [255,255,255]
+        result  = Image.fromarray(out, 'RGB')
     elif mode == 'transparent_white':
-        # black pixels opaque, white pixels transparent
-        out      = np.zeros((*arr.shape, 4), dtype=np.uint8)
-        out[black_mask] = [0, 0, 0, 255]      # black, fully opaque
-        out[white_mask] = [0, 0, 0, 0  ]      # transparent
-        result = Image.fromarray(out, 'RGBA')
-
+        out = np.zeros((*binary.shape, 4), dtype=np.uint8)
+        out[bm] = [0,0,0,255]
+        result  = Image.fromarray(out, 'RGBA')
     elif mode == 'transparent_black':
-        # white pixels opaque, black pixels transparent
-        out      = np.zeros((*arr.shape, 4), dtype=np.uint8)
-        out[white_mask] = [255, 255, 255, 255]   # white, fully opaque
-        out[black_mask] = [0,   0,   0,   0  ]   # transparent
-        result = Image.fromarray(out, 'RGBA')
-
+        out = np.zeros((*binary.shape, 4), dtype=np.uint8)
+        out[wm] = [255,255,255,255]
+        result  = Image.fromarray(out, 'RGBA')
     else:
         return JsonResponse({'ok': False, 'msg': 'Неизвестный режим'})
 
-    # Build preview data URI
     buf = io.BytesIO()
     result.save(buf, 'PNG')
     preview = 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()
 
-    # Optionally save to gallery
     saved_as = None
     if save:
-        stem   = os.path.splitext(name)[0]
-        suffix = {'bw': '_bw', 'transparent_white': '_tw', 'transparent_black': '_tb'}[mode]
-        saved_as = f'{stem}{suffix}_t{threshold}.png'
-        out_path = os.path.join(settings.IMAGES_DIR, saved_as)
-        result.save(out_path, 'PNG')
+        stem     = os.path.splitext(name)[0]
+        mode_sfx = {'bw':'bw','transparent_white':'tw','transparent_black':'tb'}[mode]
+        saved_as = f'{stem}_{method[:3]}_{mode_sfx}_t{threshold}.png'
+        result.save(os.path.join(settings.IMAGES_DIR, saved_as), 'PNG')
 
-    return JsonResponse({'ok': True, 'preview': preview, 'saved_as': saved_as})
+    return JsonResponse({
+        'ok': True, 'preview': preview, 'saved_as': saved_as,
+        'black_pct': int(np.sum(bm)/bm.size*100),
+    })
 
 
 def media_img(request, name):
