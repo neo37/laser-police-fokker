@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>G-code · {{ filename }}</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0d0d0d;
+  color: #ccc;
+  font-family: monospace;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+header {
+  background: #161616;
+  border-bottom: 1px solid #2a2a2a;
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+header h1 { font-size: 14px; color: #0df; letter-spacing: 2px; }
+.meta { font-size: 11px; color: #555; }
+.btn {
+  padding: 5px 14px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 11px;
+  border: 1px solid #0df;
+  background: #0a2a3a;
+  color: #0df;
+  text-decoration: none;
+  margin-left: auto;
+}
+.btn:hover { background: #1a4a5a; }
+
+.stats {
+  background: #111;
+  border-bottom: 1px solid #222;
+  padding: 6px 18px;
+  display: flex;
+  gap: 24px;
+  font-size: 11px;
+  color: #555;
+  flex-shrink: 0;
+}
+.stats span { color: #0df; }
+
+.code-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+.code-area::-webkit-scrollbar { width: 6px; }
+.code-area::-webkit-scrollbar-track { background: #0d0d0d; }
+.code-area::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+table { width: 100%; border-collapse: collapse; }
+tr:hover { background: #141414; }
+td.ln {
+  color: #333;
+  text-align: right;
+  padding: 1px 12px 1px 18px;
+  user-select: none;
+  width: 1%;
+  white-space: nowrap;
+  border-right: 1px solid #1a1a1a;
+  font-size: 11px;
+}
+td.code {
+  padding: 1px 18px;
+  white-space: pre;
+  color: #aaa;
+}
+
+/* Syntax colouring */
+.kw-g0, .kw-g1  { color: #0df; }
+.kw-m3          { color: #ffa040; }
+.kw-m5          { color: #888; }
+.kw-g92         { color: #fd0; }
+.kw-comment     { color: #3a3a3a; font-style: italic; }
+.kw-set         { color: #a0f0a0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>G-CODE VIEWER</h1>
+  <div class="meta">{{ filename }}</div>
+  <a class="btn" href="/gcode/{{ filename }}/download">⬇ Скачать</a>
+  <a class="btn" href="/" style="margin-left:8px">← Назад</a>
+</header>
+
+<div class="stats">
+  Строк: <span>{{ total }}</span>
+  &nbsp;·&nbsp;
+  Размер файла: <span id="fsize">—</span>
+  &nbsp;·&nbsp;
+  Команд движения: <span id="nmoves">—</span>
+  &nbsp;·&nbsp;
+  Поджигов лазера: <span id="nfires">—</span>
+</div>
+
+<div class="code-area">
+<table id="tbl">
+{% for line in lines %}<tr>
+  <td class="ln">{{ forloop.counter }}</td>
+  <td class="code" data-raw="{{ line|escapejs }}">{{ line }}</td>
+</tr>{% endfor %}
+</table>
+</div>
+
+<script>
+'use strict';
+
+const rows  = document.querySelectorAll('td.code');
+let moves   = 0;
+let fires   = 0;
+let bytes   = 0;
+
+rows.forEach(td => {
+  const raw = td.dataset.raw || td.textContent;
+  bytes += raw.length + 1;
+
+  const cmd = raw.trim().toUpperCase();
+
+  if (cmd.startsWith('G0 ') || cmd === 'G0') {
+    td.classList.add('kw-g0');
+    moves++;
+  } else if (cmd.startsWith('G1 ') || cmd === 'G1') {
+    td.classList.add('kw-g1');
+    moves++;
+  } else if (cmd.startsWith('M3')) {
+    td.classList.add('kw-m3');
+    fires++;
+  } else if (cmd.startsWith('M5')) {
+    td.classList.add('kw-m5');
+  } else if (cmd.startsWith('G92')) {
+    td.classList.add('kw-g92');
+  } else if (cmd.startsWith(';') || cmd.startsWith('(')) {
+    td.classList.add('kw-comment');
+  } else if (cmd.startsWith('$') || cmd.startsWith('G21') || cmd.startsWith('G90')) {
+    td.classList.add('kw-set');
+  }
+});
+
+document.getElementById('nmoves').textContent  = moves.toLocaleString();
+document.getElementById('nfires').textContent  = fires.toLocaleString();
+document.getElementById('fsize').textContent   = (bytes / 1024).toFixed(1) + ' KB';
+</script>
+</body>
+</html>
