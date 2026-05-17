@@ -140,14 +140,20 @@ def _generate_gcode_for_item(item, power, speed, spacing):
         if not segs:
             continue
 
-        if row % 2 == 1:
-            segs = [(w - 1 - e, w - 1 - s) for s, e in reversed(segs)]
-
-        for xs, xe in segs:
-            cmds.append(f'G0 X{x_off + xs * spacing:.3f} Y{y:.3f}')
-            cmds.append(f'M3 S{power}')
-            cmds.append(f'G1 F{speed} X{x_off + xe * spacing:.3f}')
-            cmds.append('M5')
+        if row % 2 == 0:
+            # Even rows: left → right
+            for xs, xe in segs:
+                cmds.append(f'G0 X{x_off + xs * spacing:.3f} Y{y:.3f}')
+                cmds.append(f'M3 S{power}')
+                cmds.append(f'G1 F{speed} X{x_off + xe * spacing:.3f}')
+                cmds.append('M5')
+        else:
+            # Odd rows: right → left (same pixels, reversed scan direction)
+            for xs, xe in reversed(segs):
+                cmds.append(f'G0 X{x_off + xe * spacing:.3f} Y{y:.3f}')
+                cmds.append(f'M3 S{power}')
+                cmds.append(f'G1 F{speed} X{x_off + xs * spacing:.3f}')
+                cmds.append('M5')
 
     return cmds
 
