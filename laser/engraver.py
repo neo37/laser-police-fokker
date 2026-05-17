@@ -15,6 +15,7 @@ class _State:
         self._ser_lock     = threading.Lock()
         self._ser          = None    # persistent serial, open after calibrate()
         self.origin_set    = False
+        self.needs_homing  = False   # True after stop/error — must calibrate before next job
         # periodic recalibration
         self.recal_idx     = 0       # current pause index (1-based)
         self.recal_total   = 0       # total planned pauses for current job
@@ -233,7 +234,8 @@ def calibrate():
         ser.flushInput()
 
         state.set_ser(ser)
-        state.origin_set = True
+        state.origin_set   = True
+        state.needs_homing = False
         state.status  = 'idle'
         state.message = 'Юстировка выполнена — позиция 0,0 задана'
         return True, 'Юстировка выполнена'
@@ -347,9 +349,10 @@ def _worker_layout(layout, power, speed, spacing, recal_count):
                 if state._stop.is_set():
                     ser.write(b'\x18')
                     ser.write(b'M5\n')
-                    state.status      = 'stopped'
-                    state.message     = 'Остановлено пользователем'
-                    state.origin_set  = False
+                    state.status       = 'stopped'
+                    state.message      = 'Остановлено — переместите лазер в 0,0 перед следующим заданием'
+                    state.origin_set   = False
+                    state.needs_homing = True
                     state.close_ser()
                     return
 
@@ -358,8 +361,9 @@ def _worker_layout(layout, power, speed, spacing, recal_count):
                 if not ok:
                     errors += 1
                     if errors > 5:
-                        state.status  = 'error'
-                        state.message = 'Слишком много ошибок GRBL'
+                        state.status       = 'error'
+                        state.message      = 'Слишком много ошибок GRBL — переместите лазер в 0,0'
+                        state.needs_homing = True
                         ser.write(b'\x18')
                         state.origin_set = False
                         state.close_ser()
@@ -379,21 +383,24 @@ def _worker_layout(layout, power, speed, spacing, recal_count):
                     break
                 _do_recal_pause(ser, seg_i, recal_count, t0)
 
-        state.status   = 'done'
-        state.progress = 100
-        state.message  = 'Готово!'
-        state.origin_set = False
+        state.status        = 'done'
+        state.progress      = 100
+        state.message       = 'Готово!'
+        state.origin_set    = False
+        state.needs_homing  = False   # completed normally — head is back at 0,0
         state.close_ser()
 
     except serial.SerialException as e:
-        state.status  = 'error'
-        state.message = f'Порт недоступен: {e}'
-        state.origin_set = False
+        state.status        = 'error'
+        state.message       = f'Порт недоступен: {e} — переместите лазер в 0,0'
+        state.needs_homing  = True
+        state.origin_set    = False
         state.close_ser()
     except Exception as e:
-        state.status  = 'error'
-        state.message = f'Ошибка: {e}'
-        state.origin_set = False
+        state.status        = 'error'
+        state.message       = f'Ошибка: {e} — переместите лазер в 0,0'
+        state.needs_homing  = True
+        state.origin_set    = False
         state.close_ser()
 
 
@@ -442,6 +449,8 @@ def read_gcode_file(filename):
 def start_layout(layout, power, speed, spacing, recal_count=0):
     if state.thread and state.thread.is_alive():
         return False, 'Уже выполняется'
+    if state.needs_homing and not state.origin_set:
+        return False, 'NEEDS_HOMING'
     state.reset()
     state.session_id = str(uuid.uuid4())[:8]
     state.job_start  = datetime.now().isoformat(timespec='seconds')
@@ -486,13 +495,14 @@ def stop():
 
 def get_status():
     return {
-        'status':       state.status,
-        'progress':     state.progress,
-        'total':        state.total,
-        'message':      state.message,
-        'origin_set':   state.origin_set,
-        'recal_idx':    state.recal_idx,
-        'recal_total':  state.recal_total,
+        'status':        state.status,
+        'progress':      state.progress,
+        'total':         state.total,
+        'message':       state.message,
+        'origin_set':    state.origin_set,
+        'needs_homing':  state.needs_homing,
+        'recal_idx':     state.recal_idx,
+        'recal_total':   state.recal_total,
     }
 
 

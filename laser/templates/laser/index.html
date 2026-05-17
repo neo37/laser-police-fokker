@@ -258,6 +258,39 @@ header h1 { font-size: 15px; color: var(--cyan); letter-spacing: 3px; }
 #calib-indicator.ok  { background: #0a2a0a; color: #4f4; border: 1px solid #2a4a2a; }
 #calib-indicator.err { background: #2a0a0a; color: #f88; border: 1px solid #4a2a2a; }
 
+/* ── Homing required overlay ─────────────────────────── */
+#homing-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.82);
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+}
+#homing-overlay.show { display: flex; }
+#homing-box {
+  background: #161616;
+  border: 2px solid var(--red);
+  border-radius: 6px;
+  padding: 28px 36px;
+  text-align: center;
+  max-width: 380px;
+}
+#homing-box h2 { color: var(--red); font-size: 13px; letter-spacing: 2px; margin-bottom: 14px; }
+#homing-box p  { font-size: 12px; color: #aaa; line-height: 1.6; margin-bottom: 20px; }
+#btn-homing-ok {
+  padding: 8px 28px;
+  background: #0a1a2a;
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 12px;
+}
+#btn-homing-ok:hover { background: #1a3a4a; }
+
 /* ── Recal overlay ────────────────────────────────────── */
 #recal-overlay {
   display: none;
@@ -548,6 +581,20 @@ footer {
     <div id="status-msg">Ready</div>
   </div>
 </footer>
+
+<!-- ── Homing required overlay ──────────────────── -->
+<div id="homing-overlay">
+  <div id="homing-box">
+    <h2>⚠ ЛАЗЕР НЕ В НАЧАЛЬНОЙ ТОЧКЕ</h2>
+    <p>
+      Задание было прервано — лазерная головка<br>
+      находится в неизвестной позиции.<br><br>
+      <strong>Переместите её вручную в точку 0,0</strong><br>
+      и нажмите «Задать 0,0» в правой панели.
+    </p>
+    <button id="btn-homing-ok" onclick="closeHomingModal()">Понял, перемещаю</button>
+  </div>
+</div>
 
 <!-- ── Recalibration pause overlay ──────────────── -->
 <div id="recal-overlay">
@@ -1243,8 +1290,27 @@ function buildLayout() {
   }));
 }
 
+function closeHomingModal() {
+  g('homing-overlay').classList.remove('show');
+  // Scroll right panel to calibration button
+  g('btn-calibrate').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  g('btn-calibrate').style.outline = '2px solid var(--red)';
+  setTimeout(() => g('btn-calibrate').style.outline = '', 3000);
+}
+
 async function startEngrave() {
   if (!objects.length) return;
+
+  // Check if homing is required before even trying
+  try {
+    const sr = await fetch('/api/status/');
+    const sd = await sr.json();
+    if (sd.needs_homing && !sd.origin_set) {
+      g('homing-overlay').classList.add('show');
+      return;
+    }
+  } catch (_) {}
+
   g('btn-engrave').disabled = true;
   const body = {
     layout:      buildLayout(),
@@ -1263,6 +1329,9 @@ async function startEngrave() {
     if (d.ok) {
       g('status-msg').textContent = 'Started...';
       startStream();
+    } else if (d.msg === 'NEEDS_HOMING') {
+      g('homing-overlay').classList.add('show');
+      g('btn-engrave').disabled = false;
     } else {
       g('status-msg').textContent = 'Error: ' + d.msg;
       g('btn-engrave').disabled = false;
@@ -1287,6 +1356,21 @@ function startStream() {
     g('conn-status').textContent  = d.status.toUpperCase();
     g('conn-status').className    = ['done', 'idle'].includes(d.status) ? 'ok'
                                   : d.status === 'error' ? 'err' : '';
+
+    // Homing warning on engrave button
+    if (d.needs_homing && !d.origin_set) {
+      g('btn-engrave').style.background    = '#3a0a0a';
+      g('btn-engrave').style.borderColor   = 'var(--red)';
+      g('btn-engrave').style.color         = 'var(--red)';
+      g('btn-engrave').textContent         = '⚠ Задай 0,0';
+      g('btn-engrave').disabled            = false;
+    } else if (!d.needs_homing) {
+      g('btn-engrave').style.background    = '';
+      g('btn-engrave').style.borderColor   = '';
+      g('btn-engrave').style.color         = '';
+      if (g('btn-engrave').textContent === '⚠ Задай 0,0')
+        g('btn-engrave').textContent = '▶ ENGRAVE';
+    }
 
     // Update calibration indicator from status
     if (d.origin_set !== undefined) {
@@ -1343,6 +1427,12 @@ loadImages();
       g('calib-indicator').className   = 'ok';
       g('calib-indicator').textContent = '✓ 0,0 задан — машина вернётся сюда';
       g('btn-calibrate').textContent   = '⊕ Переустановить 0,0';
+    }
+    if (d.needs_homing && !d.origin_set) {
+      g('btn-engrave').style.background  = '#3a0a0a';
+      g('btn-engrave').style.borderColor = 'var(--red)';
+      g('btn-engrave').style.color       = 'var(--red)';
+      g('btn-engrave').textContent       = '⚠ Задай 0,0';
     }
 
     if (!['idle', 'done', 'stopped', 'error'].includes(d.status)) startStream();
