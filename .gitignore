@@ -1,5 +1,11 @@
 venv/
 __pycache__/
+INFO.txt
+engrave_neo36.py
+grbl_trace.json
+photo2laser.py
+СТАТУС.md
+ц/
 *.pyc
 *.pyo
 *.pyd
