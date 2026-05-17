@@ -15,6 +15,7 @@ urlpatterns = [
     path('api/calibrate/',               views.api_calibrate,     name='api_calibrate'),
     path('api/resume-recal/',            views.api_resume_recal,  name='api_resume_recal'),
     path('api/recal-log/',               views.api_recal_log,     name='api_recal_log'),
+    path('api/convert-bw/',             views.api_convert_bw,    name='api_convert_bw'),
     # G-code files
     path('api/save-gcode/',              views.api_save_gcode,    name='api_save_gcode'),
     path('api/gcode-list/',              views.api_gcode_list,    name='api_gcode_list'),

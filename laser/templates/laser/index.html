@@ -555,6 +555,72 @@ footer {
       </div>
     </div>
 
+    <!-- ── B&W Converter ────────────────────────── -->
+    <div class="rp-section" id="bw-section">
+      <h2>B&amp;W Конвертер</h2>
+
+      <div class="field">
+        <label>Изображение</label>
+        <select id="bw-img" style="background:#222;border:1px solid #333;color:#ddd;
+                padding:4px 6px;border-radius:3px;width:100%;font-family:monospace;font-size:12px">
+          <option value="">— выбери —</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Порог <span id="bw-thresh-val" style="color:var(--cyan)">128</span></label>
+        <input type="range" id="bw-thresh" min="0" max="255" value="128"
+               oninput="g('bw-thresh-val').textContent=this.value; bwPreviewDebounce()">
+      </div>
+
+      <div class="field">
+        <label>Режим</label>
+        <div style="display:flex;flex-direction:column;gap:4px;margin-top:2px">
+          <label style="display:flex;align-items:center;gap:6px;color:#aaa;cursor:pointer">
+            <input type="radio" name="bw-mode" value="bw" checked onchange="bwPreviewDebounce()">
+            ⬛ Чёрный / Белый
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;color:#aaa;cursor:pointer">
+            <input type="radio" name="bw-mode" value="transparent_white" onchange="bwPreviewDebounce()">
+            ▪ Чёрный / Прозрачный
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;color:#aaa;cursor:pointer">
+            <input type="radio" name="bw-mode" value="transparent_black" onchange="bwPreviewDebounce()">
+            □ Белый / Прозрачный
+          </label>
+        </div>
+      </div>
+
+      <!-- Preview -->
+      <div id="bw-preview-wrap" style="display:none;margin:8px 0;border:1px solid #333;
+           border-radius:3px;overflow:hidden;background:#111;text-align:center">
+        <img id="bw-preview-img" style="max-width:100%;max-height:120px;object-fit:contain;
+             display:block;margin:auto">
+      </div>
+
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <button onclick="bwConvert(false)"
+          style="flex:1;padding:6px;background:#0a1a2a;border:1px solid var(--cyan);
+                 color:var(--cyan);border-radius:3px;cursor:pointer;font-family:monospace;font-size:11px">
+          Конвертировать
+        </button>
+        <button id="bw-btn-add" onclick="bwAddToCanvas()" disabled
+          style="flex:1;padding:6px;background:#0a2a0a;border:1px solid #2a4a2a;
+                 color:#4a8a4a;border-radius:3px;cursor:pointer;font-family:monospace;font-size:11px">
+          На холст
+        </button>
+      </div>
+      <div id="bw-save-row" style="display:none;margin-top:6px">
+        <a id="bw-download-link" download
+          style="display:block;text-align:center;padding:5px;background:#1a1a0a;
+                 border:1px solid #555;color:#fd0;border-radius:3px;
+                 font-family:monospace;font-size:11px;text-decoration:none">
+          ⬇ Скачать PNG
+        </a>
+      </div>
+      <div id="bw-status" style="font-size:10px;color:#555;margin-top:4px;text-align:center"></div>
+    </div>
+
     <!-- ── G-code export ─────────────────────────── -->
     <div class="rp-section">
       <h2>G-code</h2>
@@ -1002,6 +1068,7 @@ canvas.addEventListener('mouseleave', () => {
 async function loadImages() {
   const r = await fetch('/api/images/');
   const d = await r.json();
+  bwPopulateSelect(d.images);
   const gallery = g('img-gallery');
   gallery.innerHTML = '';
   d.images.forEach(name => {
@@ -1201,6 +1268,83 @@ function recalcTime() {
   const mins = Math.floor(timeSec / 60);
   const secs = Math.round(timeSec % 60);
   g('est-time').textContent = `Estimated time: ~${mins}m ${secs}s`;
+}
+
+// ── B&W Converter ─────────────────────────────────────
+let _bwDebTimer = null;
+let _bwLastResult = null;   // {preview, saved_as}
+
+function bwPopulateSelect(images) {
+  const sel = g('bw-img');
+  const cur = sel.value;
+  while (sel.options.length > 1) sel.remove(1);
+  images.forEach(name => {
+    const o = document.createElement('option');
+    o.value = o.textContent = name;
+    sel.appendChild(o);
+  });
+  if (cur) sel.value = cur;
+  sel.onchange = () => bwPreviewDebounce();
+}
+
+function bwMode() {
+  return document.querySelector('input[name="bw-mode"]:checked').value;
+}
+
+function bwPreviewDebounce() {
+  clearTimeout(_bwDebTimer);
+  _bwDebTimer = setTimeout(() => bwConvert(true), 300);
+}
+
+async function bwConvert(previewOnly) {
+  const img = g('bw-img').value;
+  if (!img) { g('bw-status').textContent = 'Выбери изображение'; return; }
+
+  g('bw-status').textContent = '⏳ Обработка...';
+  g('bw-btn-add').disabled   = true;
+  g('bw-save-row').style.display = 'none';
+
+  try {
+    const r = await fetch('/api/convert-bw/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image:     img,
+        threshold: parseInt(g('bw-thresh').value),
+        mode:      bwMode(),
+        save:      !previewOnly,
+      }),
+    });
+    const d = await r.json();
+    if (!d.ok) { g('bw-status').textContent = '✗ ' + d.msg; return; }
+
+    // Show preview
+    g('bw-preview-img').src           = d.preview;
+    g('bw-preview-wrap').style.display = '';
+    _bwLastResult = d;
+
+    if (!previewOnly && d.saved_as) {
+      // Enable "add to canvas" and download
+      g('bw-btn-add').disabled           = false;
+      g('bw-btn-add').style.borderColor  = 'var(--green)';
+      g('bw-btn-add').style.color        = 'var(--green)';
+      g('bw-save-row').style.display     = '';
+      const dl = g('bw-download-link');
+      dl.href     = d.preview;   // data URI → browser downloads
+      dl.download = d.saved_as;
+      g('bw-status').textContent = '✓ Сохранено: ' + d.saved_as;
+      loadImages();   // refresh gallery
+    } else if (previewOnly) {
+      g('bw-status').textContent = 'Предпросмотр';
+    }
+  } catch (e) {
+    g('bw-status').textContent = '✗ Ошибка';
+  }
+}
+
+function bwAddToCanvas() {
+  if (!_bwLastResult || !_bwLastResult.saved_as) return;
+  addImageToCanvas(_bwLastResult.saved_as);
 }
 
 // ── Calibration ───────────────────────────────────────

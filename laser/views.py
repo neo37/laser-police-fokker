@@ -1,4 +1,6 @@
-import json, os, base64, time, mimetypes
+import json, os, base64, time, mimetypes, io
+from PIL import Image
+import numpy as np
 from django.http import JsonResponse, StreamingHttpResponse, HttpResponse, Http404
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import render
@@ -182,6 +184,78 @@ def api_upload(request):
         for chunk in f.chunks():
             out.write(chunk)
     return JsonResponse({'ok': True, 'name': f.name})
+
+
+@csrf_exempt
+def api_convert_bw(request):
+    """
+    Convert an image to 2-colour PNG.
+
+    Body JSON:
+      image     — filename in IMAGES_DIR
+      threshold — 0-255  (pixels >= threshold → white, < threshold → black)
+      mode      — "bw"               : pure black & white
+                  "transparent_white": black pixels kept, white → transparent
+                  "transparent_black": white pixels kept, black → transparent
+      save      — bool, save result to IMAGES_DIR (default true)
+
+    Returns:
+      {ok, preview (data URI), saved_as (filename or null)}
+    """
+    d         = json.loads(request.body)
+    name      = os.path.basename(d.get('image', ''))
+    threshold = max(0, min(255, int(d.get('threshold', 128))))
+    mode      = d.get('mode', 'bw')
+    save      = d.get('save', True)
+
+    src_path = os.path.join(settings.IMAGES_DIR, name)
+    if not os.path.exists(src_path):
+        return JsonResponse({'ok': False, 'msg': 'Файл не найден'})
+
+    img  = Image.open(src_path).convert('L')   # grayscale
+    arr  = np.array(img)
+
+    white_mask = arr >= threshold   # True → white
+    black_mask = ~white_mask        # True → black
+
+    if mode == 'bw':
+        out = np.zeros((*arr.shape, 3), dtype=np.uint8)
+        out[white_mask] = [255, 255, 255]
+        out[black_mask] = [0,   0,   0  ]
+        result = Image.fromarray(out, 'RGB')
+
+    elif mode == 'transparent_white':
+        # black pixels opaque, white pixels transparent
+        out      = np.zeros((*arr.shape, 4), dtype=np.uint8)
+        out[black_mask] = [0, 0, 0, 255]      # black, fully opaque
+        out[white_mask] = [0, 0, 0, 0  ]      # transparent
+        result = Image.fromarray(out, 'RGBA')
+
+    elif mode == 'transparent_black':
+        # white pixels opaque, black pixels transparent
+        out      = np.zeros((*arr.shape, 4), dtype=np.uint8)
+        out[white_mask] = [255, 255, 255, 255]   # white, fully opaque
+        out[black_mask] = [0,   0,   0,   0  ]   # transparent
+        result = Image.fromarray(out, 'RGBA')
+
+    else:
+        return JsonResponse({'ok': False, 'msg': 'Неизвестный режим'})
+
+    # Build preview data URI
+    buf = io.BytesIO()
+    result.save(buf, 'PNG')
+    preview = 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()
+
+    # Optionally save to gallery
+    saved_as = None
+    if save:
+        stem   = os.path.splitext(name)[0]
+        suffix = {'bw': '_bw', 'transparent_white': '_tw', 'transparent_black': '_tb'}[mode]
+        saved_as = f'{stem}{suffix}_t{threshold}.png'
+        out_path = os.path.join(settings.IMAGES_DIR, saved_as)
+        result.save(out_path, 'PNG')
+
+    return JsonResponse({'ok': True, 'preview': preview, 'saved_as': saved_as})
 
 
 def media_img(request, name):
