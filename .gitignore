@@ -19,5 +19,12 @@ recal_log.jsonl
 *.jpeg
 *.bmp
 *.gif
+*.tiff
+*.tif
+*.webp
+*.ico
+*.svg
+*.heic
 ftp.png
 media/
+argparse
